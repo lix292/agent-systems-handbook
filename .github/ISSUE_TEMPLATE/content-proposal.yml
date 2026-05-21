@@ -19,12 +19,12 @@ body:
   - type: dropdown
     id: contribution_track
     attributes:
-      label: Contribution track
-      description: Used by Prompthon to apply the safe `track:*` label.
+      label: Repository track
+      description: Pick the path policy Prompthon should apply as a safe `track:*` label.
       options:
-        - explorer
-        - practitioner
-        - builder
+        - Explorer
+        - Practitioner
+        - Builder
     validations:
       required: true
   - type: dropdown
@@ -41,6 +41,105 @@ body:
         - translation
         - docs
         - enhancement
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        ## Skill Compass score proposal
+
+        Propose how this issue should split Vision, Harness, and Craft points.
+        Use the score dropdowns to select values from 0 to 100 in 5-point
+        steps. The total of all three values must be between 1 and 100.
+        A collaborator may adjust these values before approving the issue.
+  - type: dropdown
+    id: vision_score
+    attributes:
+      label: Vision score
+      description: Discovery, framing, strategy, research, synthesis, or editorial judgment. Select a value from 0 to 100 in 5-point steps.
+      options:
+        - "0"
+        - "5"
+        - "10"
+        - "15"
+        - "20"
+        - "25"
+        - "30"
+        - "35"
+        - "40"
+        - "45"
+        - "50"
+        - "55"
+        - "60"
+        - "65"
+        - "70"
+        - "75"
+        - "80"
+        - "85"
+        - "90"
+        - "95"
+        - "100"
+      default: 12
+    validations:
+      required: true
+  - type: dropdown
+    id: harness_score
+    attributes:
+      label: Harness score
+      description: Applying workflows, tools, templates, systems, or existing repo patterns. Select a value from 0 to 100 in 5-point steps.
+      options:
+        - "0"
+        - "5"
+        - "10"
+        - "15"
+        - "20"
+        - "25"
+        - "30"
+        - "35"
+        - "40"
+        - "45"
+        - "50"
+        - "55"
+        - "60"
+        - "65"
+        - "70"
+        - "75"
+        - "80"
+        - "85"
+        - "90"
+        - "95"
+        - "100"
+      default: 4
+    validations:
+      required: true
+  - type: dropdown
+    id: craft_score
+    attributes:
+      label: Craft score
+      description: Building, writing, coding, polishing, testing, or improving the final artifact. Select a value from 0 to 100 in 5-point steps.
+      options:
+        - "0"
+        - "5"
+        - "10"
+        - "15"
+        - "20"
+        - "25"
+        - "30"
+        - "35"
+        - "40"
+        - "45"
+        - "50"
+        - "55"
+        - "60"
+        - "65"
+        - "70"
+        - "75"
+        - "80"
+        - "85"
+        - "90"
+        - "95"
+        - "100"
+      default: 4
     validations:
       required: true
   - type: dropdown
