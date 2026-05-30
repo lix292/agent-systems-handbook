@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   CheckCircleOutlined,
+  ReloadOutlined,
   StopOutlined,
 } from "@ant-design/icons";
 import {
@@ -76,11 +77,32 @@ type AnalyticsResponse = {
   buckets: Array<{ day: string; classification: string; issueStatus: string; count: number }>;
 };
 
+type SendMode = "oauth" | "connector";
+
 type PendingSend = {
   issueId: number;
   label: string;
   draftHtml: string;
+  mode: SendMode;
   expiresAt: number;
+  previousStatus: string;
+};
+
+type PatchIssueResponse = {
+  ok: boolean;
+  queued?: boolean;
+  sent?: boolean;
+  manuallyResolved?: boolean;
+  sendMode?: "connector_required";
+  error?: string;
+};
+
+type GmailOAuthStatus = {
+  configured: boolean;
+  connected: boolean;
+  emailAddress: string;
+  connectedAt: string | null;
+  usesEnvRefreshToken: boolean;
 };
 
 const EMPTY_ISSUES: IssuesResponse = {
@@ -108,6 +130,14 @@ const EMPTY_ANALYTICS: AnalyticsResponse = {
   typeCounts: [],
   statusCounts: [],
   buckets: [],
+};
+
+const EMPTY_GMAIL_OAUTH_STATUS: GmailOAuthStatus = {
+  configured: false,
+  connected: false,
+  emailAddress: "",
+  connectedAt: null,
+  usesEnvRefreshToken: false,
 };
 
 const ACTION_DELAY_MS = 5000;
@@ -197,6 +227,11 @@ export function DashboardClient() {
   const [editingCustomer, setEditingCustomer] = useState<CustomerItem | null>(null);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
   const [pendingNow, setPendingNow] = useState(() => Date.now());
+  const [refreshingDashboard, setRefreshingDashboard] = useState(false);
+  const [gmailConnectorEnabled, setGmailConnectorEnabled] = useState(false);
+  const [gmailOAuthStatus, setGmailOAuthStatus] = useState<GmailOAuthStatus>(
+    EMPTY_GMAIL_OAUTH_STATUS,
+  );
   const [customerForm] = Form.useForm();
   const pendingSendRef = useRef<PendingSend | null>(null);
   const pendingSendTimerRef = useRef<number | null>(null);
@@ -252,6 +287,14 @@ export function DashboardClient() {
     });
   }
 
+  async function loadGmailOAuthStatus() {
+    const data = await fetchJson<GmailOAuthStatus>("/api/gmail/oauth/status");
+    setGmailOAuthStatus({
+      ...EMPTY_GMAIL_OAUTH_STATUS,
+      ...data,
+    });
+  }
+
   async function loadReviewQueue() {
     const data = await fetchJson<CustomerResponse>("/api/customers/review?page=1&pageSize=20");
     setReviewQueue({
@@ -288,6 +331,21 @@ export function DashboardClient() {
       items: data.items ?? [],
     });
     return data;
+  }
+
+  async function refreshDashboard() {
+    setRefreshingDashboard(true);
+    try {
+      await Promise.all([
+        loadIssues(),
+        loadAnalytics(),
+        loadReviewQueue(),
+        loadCustomers(),
+        loadGmailOAuthStatus(),
+      ]);
+    } finally {
+      setRefreshingDashboard(false);
+    }
   }
 
   useEffect(() => {
@@ -344,6 +402,22 @@ export function DashboardClient() {
   useEffect(() => {
     let active = true;
     void (async () => {
+      const data = await fetchJson<GmailOAuthStatus>("/api/gmail/oauth/status");
+      if (active) {
+        setGmailOAuthStatus({
+          ...EMPTY_GMAIL_OAUTH_STATUS,
+          ...data,
+        });
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
       const reviewData = await fetchJson<CustomerResponse>("/api/customers/review?page=1&pageSize=20");
       if (active) {
         setReviewQueue({
@@ -388,9 +462,17 @@ export function DashboardClient() {
 
   async function patchIssue(
     issueId: number,
-    body: { action?: "approve_to_send" | "mark_resolved" | "send_now"; draftReplyHtml?: string },
+    body: {
+      action?:
+        | "approve_to_send"
+        | "mark_resolved"
+        | "queue_send"
+        | "send_approved"
+        | "revoke_send_approval";
+      draftReplyHtml?: string;
+    },
   ) {
-    await fetchJson(`/api/issues/${issueId}`, {
+    const response = await fetchJson<PatchIssueResponse>(`/api/issues/${issueId}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -398,6 +480,7 @@ export function DashboardClient() {
       body: JSON.stringify(body),
     });
     await Promise.all([loadIssues(), loadReviewQueue(), loadCustomers()]);
+    return response;
   }
 
   async function reviewCustomerAction(customerId: number, status: "approved" | "ignored") {
@@ -445,6 +528,28 @@ export function DashboardClient() {
   function openIssue(record: IssueItem) {
     setSelectedIssue(record);
     setDraftHtml(record.draftReplyHtml ?? "<p></p>");
+  }
+
+  function setIssueStatusLocally(issueId: number, issueStatus: string) {
+    setSelectedIssue((current) =>
+      current && current.id === issueId
+        ? {
+            ...current,
+            issueStatus,
+          }
+        : current,
+    );
+    setIssues((current) => ({
+      ...current,
+      items: current.items.map((item) =>
+        item.id === issueId
+          ? {
+              ...item,
+              issueStatus,
+            }
+          : item,
+      ),
+    }));
   }
 
   function startEditingCustomer(record: CustomerItem) {
@@ -504,12 +609,16 @@ export function DashboardClient() {
   }, []);
 
   function cancelPendingSend() {
+    const pending = pendingSendRef.current;
     if (pendingSendTimerRef.current) {
       window.clearTimeout(pendingSendTimerRef.current);
       pendingSendTimerRef.current = null;
     }
     pendingSendRef.current = null;
     setPendingSend(null);
+    if (pending) {
+      setIssueStatusLocally(pending.issueId, pending.previousStatus);
+    }
   }
 
   function queueIssueSend(record: IssueItem, nextDraftHtml: string) {
@@ -521,25 +630,75 @@ export function DashboardClient() {
     cancelPendingSend();
     const scheduled: PendingSend = {
       issueId: record.id,
-      label: `Send reply to ${record.customerName || record.customerEmail}`,
+      label: `Reply to ${record.customerName || record.customerEmail}`,
       draftHtml: nextDraftHtml,
-      expiresAt: Date.now() + ACTION_DELAY_MS,
+      mode: gmailConnectorEnabled ? "connector" : "oauth",
+      expiresAt: pendingNow + ACTION_DELAY_MS,
+      previousStatus: record.issueStatus,
     };
     pendingSendRef.current = scheduled;
     setPendingSend(scheduled);
+    setIssueStatusLocally(record.id, "approved_to_send");
     pendingSendTimerRef.current = window.setTimeout(() => {
-      cancelPendingSend();
+      pendingSendTimerRef.current = null;
+      pendingSendRef.current = null;
+      setPendingSend(null);
       void patchIssue(record.id, {
         draftReplyHtml: nextDraftHtml,
-        action: "send_now",
+        action: scheduled.mode === "connector" ? "queue_send" : "send_approved",
       })
-        .then(() => {
-          setSelectedIssue(null);
+        .then((result) => {
+          if (result.sent || result.manuallyResolved) {
+            setSelectedIssue(null);
+            return;
+          }
+          if (result.queued) {
+            setIssueStatusLocally(record.id, "approved_to_send");
+            return;
+          }
+          setIssueStatusLocally(record.id, "sync_error");
         })
         .catch((error: unknown) => {
           console.error("Deferred send failed", error);
+          setIssueStatusLocally(record.id, "sync_error");
         });
     }, ACTION_DELAY_MS);
+  }
+
+  async function revokeIssueSendApproval(record: IssueItem) {
+    await patchIssue(record.id, { action: "revoke_send_approval" });
+    setIssueStatusLocally(record.id, "draft_ready");
+  }
+
+  function renderIssueSendAction(record: IssueItem) {
+    if (pendingSend?.issueId === record.id) {
+      return (
+        <Button type="primary" onClick={() => queueIssueSend(record, draftHtml)}>
+          {pendingSend.mode === "connector" ? "Cancel Approval" : "Cancel Send"}
+        </Button>
+      );
+    }
+
+    if (record.issueStatus === "approved_to_send") {
+      return (
+        <>
+          <Button type="primary" disabled>
+            Approved to Send
+          </Button>
+          <Button onClick={() => void revokeIssueSendApproval(record)}>Cancel Approval</Button>
+        </>
+      );
+    }
+
+    if (record.issueStatus === "resolved") {
+      return <Button disabled>Resolved</Button>;
+    }
+
+    return (
+      <Button type="primary" onClick={() => queueIssueSend(record, draftHtml)}>
+        {gmailConnectorEnabled ? "Approve for Connector" : "Approve & Send"}
+      </Button>
+    );
   }
 
   const issueColumns = [
@@ -763,6 +922,91 @@ export function DashboardClient() {
                         onChange={setIncludeResolved}
                       />
                     </div>
+                    <div className="gmail-mode-toggle" role="radiogroup" aria-label="Gmail mode">
+                      <Text type="secondary">Gmail mode</Text>
+                      <label
+                        className={
+                          gmailConnectorEnabled
+                            ? "gmail-mode-option"
+                            : "gmail-mode-option gmail-mode-option-active"
+                        }
+                        onClick={() => setGmailConnectorEnabled(false)}
+                      >
+                        <input
+                          type="radio"
+                          name="gmail-mode"
+                          checked={!gmailConnectorEnabled}
+                          onClick={() => setGmailConnectorEnabled(false)}
+                          onChange={() => setGmailConnectorEnabled(false)}
+                        />
+                        <span>
+                          OAuth
+                        </span>
+                      </label>
+                      <label
+                        className={
+                          gmailConnectorEnabled
+                            ? "gmail-mode-option gmail-mode-option-active"
+                            : "gmail-mode-option"
+                        }
+                        onClick={() => setGmailConnectorEnabled(true)}
+                      >
+                        <input
+                          type="radio"
+                          name="gmail-mode"
+                          checked={gmailConnectorEnabled}
+                          onClick={() => setGmailConnectorEnabled(true)}
+                          onChange={() => setGmailConnectorEnabled(true)}
+                        />
+                        <span>
+                          Gmail connector
+                        </span>
+                      </label>
+                    </div>
+                    {!gmailConnectorEnabled ? (
+                      gmailOAuthStatus.connected ? (
+                        <Tooltip
+                          title={
+                            gmailOAuthStatus.emailAddress
+                              ? `Connected as ${gmailOAuthStatus.emailAddress}`
+                              : "Local OAuth is connected."
+                          }
+                          placement="top"
+                        >
+                          <Tag color="success" className="connection-mode-tag">
+                            Gmail connected
+                          </Tag>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip
+                          title={
+                            gmailOAuthStatus.configured
+                              ? "Open Google consent and connect this local dashboard to Gmail."
+                              : "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET before connecting Gmail."
+                          }
+                          placement="top"
+                        >
+                          <Button
+                            disabled={!gmailOAuthStatus.configured}
+                            onClick={() => {
+                              window.location.href = "/api/gmail/oauth/start";
+                            }}
+                          >
+                            Connect Gmail
+                          </Button>
+                        </Tooltip>
+                      )
+                    ) : null}
+                    <Tooltip title="Refresh" placement="top">
+                      <Button
+                        aria-label="Refresh"
+                        title="Refresh"
+                        shape="circle"
+                        icon={<ReloadOutlined />}
+                        loading={refreshingDashboard}
+                        onClick={() => void refreshDashboard()}
+                      />
+                    </Tooltip>
                   </Space>
                 </Card>
                 <Table
@@ -913,32 +1157,46 @@ export function DashboardClient() {
           selectedIssue ? (
             <Space>
               <Button onClick={() => void patchIssue(selectedIssue.id, { draftReplyHtml: draftHtml })}>Save Draft</Button>
-              <Button
-                type="primary"
-                onClick={() => queueIssueSend(selectedIssue, draftHtml)}
-              >
-                {pendingSend?.issueId === selectedIssue.id ? "Cancel Send" : "Send Reply"}
-              </Button>
+              {renderIssueSendAction(selectedIssue)}
             </Space>
           ) : null
         }
       >
         {selectedIssue ? (
-            <Space orientation="vertical" size="large" style={{ display: "flex" }}>
+          <Space orientation="vertical" size="large" style={{ display: "flex" }}>
             {pendingSend?.issueId === selectedIssue.id ? (
               <Alert
                 className="pending-action-banner"
                 type="warning"
                 showIcon
-                title={`${pendingSend.label} scheduled`}
+                title={`${pendingSend.label} approved to send`}
                 description={
                   <Space wrap>
-                    <Text>{`Sending in ${Math.max(1, Math.ceil((pendingSend.expiresAt - pendingNow) / 1000))}s.`}</Text>
+                    <Text>
+                      {pendingSend.mode === "connector"
+                        ? `Queuing for connector in ${Math.max(
+                            1,
+                            Math.ceil((pendingSend.expiresAt - pendingNow) / 1000),
+                          )}s.`
+                        : `Sending in ${Math.max(
+                            1,
+                            Math.ceil((pendingSend.expiresAt - pendingNow) / 1000),
+                          )}s.`}
+                    </Text>
                     <Button size="small" onClick={cancelPendingSend}>
                       Undo
                     </Button>
                   </Space>
                 }
+              />
+            ) : null}
+            {selectedIssue.issueStatus === "approved_to_send" && pendingSend?.issueId !== selectedIssue.id ? (
+              <Alert
+                className="pending-action-banner"
+                type="info"
+                showIcon
+                title="Approved to send"
+                description="This issue is already approved for the next selected send runner. It cannot be approved again; cancel approval if you need to return it to draft review."
               />
             ) : null}
             <Card size="small" title="Issue Summary">
