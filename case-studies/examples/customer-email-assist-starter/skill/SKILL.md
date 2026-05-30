@@ -84,11 +84,13 @@ tsx scripts/customer-email-assist.ts render-save-drafts --input /tmp/draft-field
      - `draftFields.policyEvidence`
      - `draftFields.signoff`
 8. Save that JSON and run `render-save-drafts --input <file>`.
-9. In the dashboard, let the user edit the rendered draft, queue send, mark
+9. In the dashboard, let the user edit the rendered draft, approve send with
+   the undo countdown, cancel approval for still-queued replies, mark
    resolved, approve pending customers, ignore customers, or update customer
    descriptions.
-10. For queued sends, use the Codex Gmail connector to create or send the reply
-    from approved SQLite rows, then mark the issue resolved.
+10. For `approved_to_send` rows that are waiting on connector mode, use the
+    Codex Gmail connector to create or send the reply, then mark the issue
+    resolved.
 
 ## Advanced Local OAuth Adapter
 
@@ -97,11 +99,21 @@ explicitly want a standalone local integration. Treat it as advanced and do not
 present it as the normal setup path.
 
 Required advanced variables:
-- `CUSTOMER_EMAIL_ASSIST_GMAIL_LABEL`
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
-- `GOOGLE_REFRESH_TOKEN`
+
+The dashboard `Connect Gmail` button stores the refresh token locally after the
+Google consent callback. `GOOGLE_REFRESH_TOKEN` is still accepted as a manual
+fallback, but it is not required for the web-app flow.
+
+Optional:
 - `CUSTOMER_EMAIL_ASSIST_OPERATOR_EMAIL`
+- `GOOGLE_REDIRECT_URI` if the dashboard callback should not be inferred from the current origin
+- `CUSTOMER_EMAIL_ASSIST_GMAIL_LABEL` for OAuth-based inbound fetch/sync
+
+For setup details, read `README.md` in this starter directory. It documents how
+to create the Google OAuth client, use the dashboard callback, and which
+database/policy variables are optional.
 
 Advanced commands:
 
@@ -110,6 +122,11 @@ npm run sync:oauth
 tsx scripts/customer-email-assist.ts prepare-inbound-batch --out /tmp/prepared-inbound.json
 tsx scripts/customer-email-assist.ts apply-send-queue
 ```
+
+When this advanced local OAuth path is connected, the dashboard's `Approve &
+Send` action can execute the deterministic send path immediately after the undo
+countdown. Without an OAuth connection, the dashboard keeps the issue in
+`approved_to_send` instead of attempting an unauthenticated send.
 
 ## Response Discipline
 

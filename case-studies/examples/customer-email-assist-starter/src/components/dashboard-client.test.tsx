@@ -6,6 +6,7 @@ import { DashboardClient } from "@/components/dashboard-client";
 const originalFetch = global.fetch;
 
 describe("DashboardClient", () => {
+  let issueStatusResponse: string;
   let reviewQueueResponse: {
     items: Array<{
       id: number;
@@ -36,6 +37,7 @@ describe("DashboardClient", () => {
   };
 
   beforeEach(() => {
+    issueStatusResponse = "draft_ready";
     reviewQueueResponse = {
       items: [],
       total: 0,
@@ -70,9 +72,33 @@ describe("DashboardClient", () => {
 
     global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
+      if (url === "/api/gmail/oauth/status") {
+        return new Response(
+          JSON.stringify({
+            configured: true,
+            connected: false,
+            emailAddress: "",
+            connectedAt: null,
+            usesEnvRefreshToken: false,
+          }),
+          { status: 200 },
+        );
+      }
       if (url.startsWith("/api/issues")) {
         if (init?.method === "PATCH") {
-          return new Response(JSON.stringify({ ok: true, queued: true }), { status: 200 });
+          const payload = JSON.parse(String(init.body)) as { action?: string };
+          return new Response(
+            JSON.stringify({
+              ok:
+                payload.action === "send_approved" ||
+                payload.action === "queue_send" ||
+                payload.action === "revoke_send_approval",
+              queued: payload.action === "queue_send",
+              sent: payload.action === "send_approved",
+              manuallyResolved: false,
+            }),
+            { status: 200 },
+          );
         }
         return new Response(
           JSON.stringify({
@@ -85,7 +111,7 @@ describe("DashboardClient", () => {
                 summary: "Wrong item received",
                 urgency: "normal",
                 actionSuggestion: "send_reply",
-                issueStatus: "draft_ready",
+                issueStatus: issueStatusResponse,
                 receivedAt: "2026-05-30T12:00:00Z",
                 originalMessageText: "The wrong item was delivered.",
                 draftReplyHtml: "<p>Draft reply</p>",
@@ -170,7 +196,7 @@ describe("DashboardClient", () => {
 
     await user.click(screen.getByText("Wrong item received"));
     expect(await screen.findByText("Issue Summary")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Queue Send" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve & Send" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => {
@@ -194,7 +220,8 @@ describe("DashboardClient", () => {
     render(<DashboardClient />);
 
     expect(await screen.findByText("Wrong item received")).toBeInTheDocument();
-    expect(screen.getByText("Connector")).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "Gmail mode" })).toBeInTheDocument();
+    expect(screen.getByText("OAuth")).toBeInTheDocument();
 
     const countCalls = (matcher: (url: string) => boolean) =>
       fetchMock.mock.calls.filter(([input]) => matcher(typeof input === "string" ? input : input.toString())).length;
@@ -224,17 +251,19 @@ describe("DashboardClient", () => {
     expect(await screen.findByText("Wrong item received")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Wrong item received"));
     vi.useFakeTimers();
-    fireEvent.click(screen.getByRole("button", { name: "Queue Send" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve & Send" }));
 
-    expect(screen.getByText("Queue reply to Casey scheduled")).toBeInTheDocument();
-    expect(screen.getAllByText(/Queueing in \d+s\./).length).toBeGreaterThan(0);
+    expect(screen.getByText("Reply to Casey approved to send")).toBeInTheDocument();
+    expect(screen.getAllByText(/Sending in \d+s\./).length).toBeGreaterThan(0);
+    expect(screen.getByText("Status: approved_to_send")).toBeInTheDocument();
     expect(global.fetch).not.toHaveBeenCalledWith(
       "/api/issues/1",
       expect.objectContaining({ method: "PATCH" }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel Send" }));
-    expect(screen.queryByText("Queue reply to Casey scheduled")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reply to Casey approved to send")).not.toBeInTheDocument();
+    expect(screen.getByText("Status: draft_ready")).toBeInTheDocument();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
@@ -247,13 +276,44 @@ describe("DashboardClient", () => {
     vi.useRealTimers();
   });
 
-  it("queues connector send from the drawer after the countdown expires", async () => {
+  it("executes OAuth send from the drawer after the countdown expires", async () => {
     render(<DashboardClient />);
 
     expect(await screen.findByText("Wrong item received")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Wrong item received"));
     vi.useFakeTimers();
-    fireEvent.click(screen.getByRole("button", { name: "Queue Send" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve & Send" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    await Promise.resolve();
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/issues/1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          draftReplyHtml: "<p>Draft reply</p>",
+          action: "send_approved",
+        }),
+      }),
+    );
+
+    vi.useRealTimers();
+  });
+
+  it("queues connector send when the Gmail connector switch is enabled", async () => {
+    render(<DashboardClient />);
+
+    expect(await screen.findByText("Wrong item received")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Gmail connector"));
+    expect(screen.getByRole("radiogroup", { name: "Gmail mode" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Wrong item received"));
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Approve for Connector" }));
+    expect(screen.getAllByText(/Queuing for connector in \d+s\./).length).toBeGreaterThan(0);
+
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
@@ -271,6 +331,30 @@ describe("DashboardClient", () => {
     );
 
     vi.useRealTimers();
+  });
+
+  it("does not allow an approved issue to be approved again", async () => {
+    issueStatusResponse = "approved_to_send";
+    render(<DashboardClient />);
+
+    expect(await screen.findByText("Wrong item received")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Wrong item received"));
+
+    expect(await within(screen.getByRole("dialog")).findByText("Approved to send")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approved to Send" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Approve & Send" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel Approval" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Approval" }));
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/issues/1",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ action: "revoke_send_approval" }),
+        }),
+      );
+    });
   });
 
   it("shows a customer review button only when pending review customers exist and opens the drawer", async () => {
