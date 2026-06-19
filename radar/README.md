@@ -19,6 +19,9 @@ without destabilizing the evergreen structure.
 
 ## Current notes
 
+- [June 2026 Prompt Injection Lockdown Mode Watch](./2026-06-prompt-injection-lockdown-mode-watch.mdx):
+  a current signal on Lockdown Mode, elevated-risk assistant surfaces,
+  connector scope, and outbound-network containment for prompt injection.
 - [June 2026 Agent-First Devices Watch](./2026-06-agent-first-devices-watch.mdx):
   a current signal on Project Solara, agent-native runtimes, just-in-time UI,
   OS-enforced containment, and control-plane governance for local agents.
