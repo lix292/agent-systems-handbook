@@ -21,14 +21,18 @@ material and they are not replacements for lab pages.
   contributor-facing note on separating managed runtimes from cross-agent
   control planes in enterprise agent systems.
 - [Deep Research Product Signals](./deep-research-product-signals.mdx): a
-  contributor-facing comparison of current OpenAI and Google deep-research
-  product signals.
+  contributor-facing comparison of current OpenAI deep-research positioning and
+  Google's Interactions-API-based developer surface for long-running research
+  agents.
 - [Deep Research Source Map](./deep-research-source-map.mdx)
+- [Evaluation Workbench Signals](./evaluation-workbench-signals.mdx): a
+  contributor-facing note on current evaluation workbench patterns across
+  development-loop evals, agent-workflow evals, and durable open-source repos.
 - [Local Agent Tooling Source Map](./local-agent-tooling-source-map.mdx): a
   contributor briefing for keeping local execution boundaries, runtimes,
-  skills, MCP roots, resources, connectors, and file-grounded workflows
-  distinct in future drafts while adding prompt-injection and local
-  authority-boundary guidance.
+  skills, discovery registries, MCP roots, resources, connectors, and
+  file-grounded workflows distinct in future drafts while adding
+  prompt-injection and local authority-boundary guidance.
 - [Open Agent Environments](./open-agent-environments.mdx): a contributor note
   on separating environment contracts, harnesses, trainers, and MCP-native
   execution surfaces in agentic RL work.
