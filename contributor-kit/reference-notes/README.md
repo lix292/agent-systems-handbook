@@ -25,6 +25,9 @@ material and they are not replacements for lab pages.
   Google's Interactions-API-based developer surface for long-running research
   agents.
 - [Deep Research Source Map](./deep-research-source-map.mdx)
+- [Evaluation Workbench Signals](./evaluation-workbench-signals.mdx): a
+  contributor-facing note on current evaluation workbench patterns across
+  development-loop evals, agent-workflow evals, and durable open-source repos.
 - [Local Agent Tooling Source Map](./local-agent-tooling-source-map.mdx): a
   contributor briefing for keeping local execution boundaries, runtimes,
   skills, discovery registries, MCP roots, resources, connectors, and
